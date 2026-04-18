@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.DS_Store
+
+# Training outputs
+synthetic_data/
+runs/
+checkpoints/
+eval_out/
+logs/
+*.pt
+*.pth
+
+# CoreML build artifacts (large artefacts kept in artefacts/ via LFS)
+*.mlmodelc/
+build/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/

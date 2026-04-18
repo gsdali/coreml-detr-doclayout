@@ -1,0 +1,21 @@
+coreml-detr-doclayout
+Copyright 2026 gsdali
+
+This product includes software derived from DETR (Detection Transformer),
+Copyright (c) Facebook, Inc. and its affiliates.
+
+DETR is developed by Facebook AI Research and licensed under the
+Apache License, Version 2.0.
+
+    https://github.com/facebookresearch/detr
+    Carion, N., Massa, F., Synnaeve, G., Usunier, N., Kirillov, A.,
+    Zagoruyko, S. "End-to-End Object Detection with Transformers."
+    ECCV 2020.
+
+The synthetic engineering-drawing data generation approach in this
+repository draws on ideas from:
+
+    Zhang, W. et al. "Data Augmentation of Engineering Drawings for
+    Data-driven Component Segmentation." ASME IDETC 2022.
+    https://github.com/teddyz829/Data-Augmentation-Engineering-Drawing
+    (MIT License)
