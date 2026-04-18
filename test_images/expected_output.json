@@ -1,71 +1,90 @@
 {
   "image": "sample_layout.png",
-  "width": 512,
-  "height": 512,
+  "source": "TriView2CAD-direct/21.png (auto-labelled; val split)",
+  "width": 1475,
+  "height": 1475,
   "ground_truth": [
     {
-      "label": "title_block",
+      "label": "view",
       "bbox_xywh": [
-        339,
-        410,
-        143,
-        72
+        71,
+        72,
+        650,
+        620
       ]
     },
     {
       "label": "view",
       "bbox_xywh": [
-        184,
-        172,
-        93,
-        132
+        939,
+        58,
+        471,
+        634
       ]
     },
     {
       "label": "view",
       "bbox_xywh": [
-        44,
-        151,
-        117,
-        179
+        77,
+        728,
+        644,
+        688
       ]
     },
     {
       "label": "dimension_cluster",
       "bbox_xywh": [
-        327,
-        133,
-        124,
-        42
+        26,
+        0,
+        711,
+        199
       ]
     },
     {
       "label": "dimension_cluster",
       "bbox_xywh": [
-        177,
-        91,
-        138,
-        32
+        840,
+        0,
+        598,
+        185
       ]
     },
     {
-      "label": "free_text",
+      "label": "dimension_cluster",
       "bbox_xywh": [
-        113,
-        341,
-        109,
-        61
+        26,
+        737,
+        711,
+        333
       ]
     },
     {
-      "label": "free_text",
+      "label": "dimension_cluster",
       "bbox_xywh": [
-        319,
-        292,
-        68,
-        52
+        0,
+        965,
+        191,
+        450
+      ]
+    },
+    {
+      "label": "dimension_cluster",
+      "bbox_xywh": [
+        99,
+        1146,
+        221,
+        221
+      ]
+    },
+    {
+      "label": "dimension_cluster",
+      "bbox_xywh": [
+        377,
+        1146,
+        221,
+        221
       ]
     }
   ],
-  "note": "Expected ground truth for sample_layout.png (a held-out synthetic drawing). Actual model predictions will approximate these with some offset and confidence \u22650.5 once training has converged."
+  "note": "Ground truth for a held-out TriView2CAD composite drawing. Labels are auto-derived: only view and dimension_cluster classes appear in this dataset."
 }

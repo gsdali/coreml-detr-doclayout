@@ -113,8 +113,17 @@ def run_model(model, processor, image: Image.Image, device) -> dict:
 
 def evaluate_map(model, processor, val_root: Path, device,
                  score_thresh: float = 0.0,
-                 iou_thresh: float = 0.5) -> dict:
-    ds = CocoLayoutDataset(val_root, "val")
+                 iou_thresh: float = 0.5,
+                 image_zip: Path | None = None,
+                 image_prefix: str = "",
+                 category_remap: dict | None = None) -> dict:
+    if image_zip is not None:
+        ds = CocoLayoutDataset(split_file=val_root / "val.json",
+                               image_zip=image_zip,
+                               image_prefix=image_prefix,
+                               category_remap=category_remap)
+    else:
+        ds = CocoLayoutDataset(val_root, "val")
     # gt[cls] = [(image_id, xyxy, matched_flag)]
     gt = defaultdict(list)
     preds = defaultdict(list)  # preds[cls] = [(score, is_tp)]
@@ -195,6 +204,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", type=Path, required=True)
     ap.add_argument("--data", type=Path, default=Path("synthetic_data"))
+    ap.add_argument("--image-zip", type=Path, default=None,
+                    help="zip archive for zip-mode data (e.g. TriView2CAD)")
+    ap.add_argument("--image-prefix", type=str, default="img_files")
     ap.add_argument("--test-images", nargs="*", type=Path, default=[])
     ap.add_argument("--out-dir", type=Path, default=Path("eval_out"))
     ap.add_argument("--num-queries", type=int, default=30)
@@ -213,8 +225,15 @@ def main():
     )
     model = load_ckpt(args.ckpt, num_queries=args.num_queries).to(device)
 
-    # --- mAP on synthetic val
-    metrics = evaluate_map(model, processor, args.data, device)
+    # --- mAP on val
+    triview_remap = {1: CLASS_NAMES.index("view"),
+                     2: CLASS_NAMES.index("dimension_cluster"),
+                     3: CLASS_NAMES.index("title_block"),
+                     4: CLASS_NAMES.index("free_text")} if args.image_zip else None
+    metrics = evaluate_map(model, processor, args.data, device,
+                           image_zip=args.image_zip,
+                           image_prefix=args.image_prefix,
+                           category_remap=triview_remap)
     print("mAP@0.5:", metrics["mAP@0.5"])
     for k, v in metrics["per_class_AP@0.5"].items():
         print(f"  {k:18s}  AP={v:.3f}  (n_gt={metrics['n_gt'].get(CLASS_NAMES.index(k), 0)})")

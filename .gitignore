@@ -8,9 +8,13 @@ venv/
 
 # Training outputs
 synthetic_data/
+real_data/
+real_data_*/
 runs/
 checkpoints/
 eval_out/
+eval_real/
+eval_real_*/
 logs/
 *.pt
 *.pth

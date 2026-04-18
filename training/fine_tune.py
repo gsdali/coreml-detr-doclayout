@@ -99,8 +99,19 @@ def eval_loss(model, loader, device):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", type=Path, required=True,
-                    help="root containing train.json, val.json, train/, val/")
+    ap.add_argument("--data", type=Path, default=None,
+                    help="root containing train.json, val.json, train/, val/ "
+                         "(directory layout). Mutually exclusive with --train-json.")
+    ap.add_argument("--train-json", type=Path, default=None,
+                    help="COCO JSON for the train split (zip layout)")
+    ap.add_argument("--val-json", type=Path, default=None,
+                    help="COCO JSON for the val split (zip layout)")
+    ap.add_argument("--image-zip", type=Path, default=None,
+                    help="zip archive containing the images")
+    ap.add_argument("--image-prefix", type=str, default="img_files",
+                    help="subdirectory within --image-zip")
+    ap.add_argument("--freeze-backbone", action="store_true",
+                    help="freeze ResNet-50 backbone weights")
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--batch-size", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
@@ -130,8 +141,27 @@ def main():
     )
     collate = make_collate_fn(processor)
 
-    train_ds = CocoLayoutDataset(args.data, "train")
-    val_ds = CocoLayoutDataset(args.data, "val")
+    # TriView2CAD uses 1-indexed categories in a different order than
+    # ours (see dataset_loader.py). Remap at load time.
+    triview_remap = {1: CLASS_NAMES.index("view"),
+                     2: CLASS_NAMES.index("dimension_cluster"),
+                     3: CLASS_NAMES.index("title_block"),
+                     4: CLASS_NAMES.index("free_text")}
+
+    if args.train_json is not None:
+        train_ds = CocoLayoutDataset(split_file=args.train_json,
+                                     image_zip=args.image_zip,
+                                     image_prefix=args.image_prefix,
+                                     category_remap=triview_remap)
+        val_ds = CocoLayoutDataset(split_file=args.val_json,
+                                   image_zip=args.image_zip,
+                                   image_prefix=args.image_prefix,
+                                   category_remap=triview_remap)
+    elif args.data is not None:
+        train_ds = CocoLayoutDataset(args.data, "train")
+        val_ds = CocoLayoutDataset(args.data, "val")
+    else:
+        raise SystemExit("Pass either --data or --train-json/--val-json")
     print(f"train: {len(train_ds)}  val: {len(val_ds)}")
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
@@ -154,6 +184,14 @@ def main():
             print(f"  load: {len(missing)} missing")
         if unexpected:
             print(f"  load: {len(unexpected)} unexpected")
+    if args.freeze_backbone:
+        n_frozen = 0
+        for n, p in model.named_parameters():
+            if "backbone" in n:
+                p.requires_grad = False
+                n_frozen += p.numel()
+        print(f"froze backbone: {n_frozen / 1e6:.1f}M params")
+
     model.to(device)
 
     # Separate LR for backbone — standard DETR recipe.

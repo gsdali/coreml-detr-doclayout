@@ -5,58 +5,99 @@ layout detection, converted to CoreML.
 
 ## Status
 
-**Pipeline-complete, trained on synthetic data only.** See
-`NOTES.md` in the upstream session workspace and the Limitations
-section below for the data-collection blocker that prevents shipping
-a production-quality fine-tune.
+**Partial fine-tune on real data (view + dimension_cluster).** The
+model detects `view` regions on real engineering drawings (AP@0.5 =
+**0.112** on held-out TriView2CAD val) and has weak-but-nonzero
+signal on `dimension_cluster` (AP = 0.006). The two other classes
+in the schema (`title_block`, `free_text`) were **not present** in
+the training set, so the model does not learn to detect them here.
+
+Inference latency on M4 ANE: **p50 ≈ 12 ms** for a 512×512 image —
+well under the 80 ms success threshold in the session plan.
+
+See `NOTES.md` in the upstream session workspace for the full data
+story (synthetic → real unblock via TriView2CAD auto-labels).
 
 ## Classes
 
 Four layout classes, suitable for engineering drawings:
 
-| id | label              | description                                                         |
-|----|--------------------|---------------------------------------------------------------------|
-| 0  | `title_block`      | standard drawing title block (typically bottom-right)               |
-| 1  | `view`             | orthographic or isometric view region                               |
-| 2  | `dimension_cluster`| grouped dimension lines, tolerances, leaders                        |
-| 3  | `free_text`        | notes, revisions, parts lists, scale/date stamps                    |
+| id | label              | description                                                         | trained? |
+|----|--------------------|---------------------------------------------------------------------|----------|
+| 0  | `title_block`      | standard drawing title block (typically bottom-right)               | **no**   |
+| 1  | `view`             | orthographic or isometric view region                               | **yes**  |
+| 2  | `dimension_cluster`| grouped dimension lines, tolerances, leaders                        | **yes**  |
+| 3  | `free_text`        | notes, revisions, parts lists, scale/date stamps                    | **no**   |
+
+The schema and model head always expose four classes. The current
+weights just never saw positive examples of classes 0 or 3, so the
+model won't produce them with meaningful confidence until it's
+retrained on a dataset that includes them.
 
 ## Repo contents
 
 ```
 artefacts/
-  detr_doclayout_512.mlpackage   FP16 CoreML, (1,3,512,512) input
-convert.py                       trace + coremltools conversion
+  detr_doclayout_512.mlpackage    FP16 CoreML, (1,3,512,512) input
+convert.py                        trace + coremltools conversion
 training/
-  fine_tune.py                   training loop (PyTorch MPS / CUDA)
-  dataset_loader.py              COCO-format loader
-  generate_synthetic.py          procedural 4-class synthetic generator
+  fine_tune.py                    training loop (PyTorch MPS / CUDA)
+  dataset_loader.py               COCO-format loader (dir + zip modes)
+  generate_synthetic.py           procedural 4-class synthetic generator
+  prepare_triview2cad.py          COCO shuffle + train/val split
+  evaluate.py                     simple mAP + visualisation
+predict.py                        Python CoreML inference + parsing
+bench.py                          latency benchmark
 requirements.txt
-test_ane.swift                   Swift CoreML harness
+test_ane.swift                    Swift CoreML harness
 test_images/
-  sample_layout.png              synthetic example
-  expected_output.json           reference detections
-benchmarks.json                  latency + mAP
+  sample_layout.png               real TriView2CAD val example
+  expected_output.json            GT annotations for that image
+benchmarks.json                   latency + mAP
 ```
 
 ## Quick start
 
+Two data modes are supported:
+
+### A) Procedural synthetic (Pillow-drawn, fast iteration):
+
 ```bash
 pip install -r requirements.txt
-
-# Generate synthetic training data (200 drawings by default)
-python training/generate_synthetic.py --out synthetic_data --n 200
-
-# Fine-tune DETR (num_queries=30, 4 classes)
+python training/generate_synthetic.py --out synthetic_data --n 500
 python training/fine_tune.py \
-    --data synthetic_data \
-    --epochs 20 \
+    --data synthetic_data --epochs 30 --batch-size 4 \
     --out checkpoints/detr_doclayout.pt
+```
 
-# Convert to CoreML
+### B) TriView2CAD real composites (2-class subset, what's shipped):
+
+```bash
+python training/prepare_triview2cad.py \
+    --in  ~/mlwd/datasets/TriView2CAD-direct/coco_labels_10k.json \
+    --out real_data_10k --val-frac 0.1
+
+python training/fine_tune.py \
+    --train-json real_data_10k/train.json \
+    --val-json   real_data_10k/val.json \
+    --image-zip  ~/mlwd/datasets/TriView2CAD-direct/img_files.zip \
+    --image-prefix img_files \
+    --freeze-backbone \
+    --epochs 4 --batch-size 4 --lr 5e-5 \
+    --out checkpoints/detr_doclayout.pt
+```
+
+### Convert and use:
+
+```bash
 python convert.py \
     --ckpt checkpoints/detr_doclayout.pt \
     --out artefacts/detr_doclayout_512.mlpackage
+
+python predict.py \
+    --model artefacts/detr_doclayout_512.mlpackage \
+    --image test_images/sample_layout.png \
+    --threshold 0.5 --save-to eval_out/
 ```
 
 ## Swift usage
@@ -87,37 +128,55 @@ DETR does not use NMS. Filter detections by score threshold only.
 - `num_queries`: `100 → 30`. Engineering drawings rarely contain more
   than ~30 layout regions. Reduces decoder cost substantially.
 - `num_classes`: `91 (COCO) → 4`. Classification head reinitialised.
-- Input size: `512 × 512`. Standard DETR supports arbitrary sizes;
-  fixing the input makes the CoreML trace deterministic.
+- Input size: `512 × 512`. Fixing the input makes the CoreML trace
+  deterministic.
+- Backbone frozen during fine-tuning — the pretrained ResNet-50 is
+  already a strong feature extractor for monochrome line drawings and
+  unfreezing it destabilised training on this dataset.
 
 ## Benchmarks
 
-See `benchmarks.json` for the numbers measured in this workspace.
+From `benchmarks.json` (M4, macOS 26.4, CoreML 8.3):
+
+| metric         | value  |
+|----------------|--------|
+| p50 latency    | **~12 ms** |
+| mean latency   | ~13 ms |
+| mAP@0.5 (`view`) | **0.112** |
+| mAP@0.5 (`dim_cluster`) | 0.006 |
+
 The ResNet-50 backbone dispatches to ANE; the transformer decoder
 typically falls back to GPU/CPU — this is expected for DETR.
 
 ## Limitations
 
-1. **Training data is synthetic-only.** No hand-labeled engineering
-   drawings were available in-session. The model learns the
-   procedural template but will not generalise well to real CAD
-   drawings. mAP on the synthetic validation set is indicative only.
-2. **The `teddyz829/Data-Augmentation-Engineering-Drawing` tool is
-   scoped to binary component segmentation** (Zhang et al., 2022),
-   not 4-class layout bounding boxes. Its DXF output also depends on
-   a 2019-era `ezdxf==0.11.1` / `dxfgrabber==1.0.1` stack that is
-   not trivial to set up on modern Python. This repo's
-   `training/generate_synthetic.py` is a pragmatic replacement: it
-   draws engineering-drawing-like primitives directly with Pillow
-   and emits COCO annotations with the 4 target classes.
-3. **`tecs` / `SMC` / `Schneider` drawings are not labeled.** The
-   `test_images/` sample and the three fixture drawings in the
-   session workspace's `_shared/test-drawings/` are used only for
-   qualitative inspection, never for quantitative evaluation.
+1. **Only two classes are trained.** The TriView2CAD dataset has
+   ground-truth bounding boxes for `view` and `dimension_cluster`
+   only. `title_block` and `free_text` categories exist in the
+   schema and the model's output head but have no positive training
+   examples yet. To cover all four, you need a dataset containing
+   them — ~50 hand- or auto-labelled tecs/SMC drawings would
+   typically be enough given transfer learning.
 
-To productionise this model you need to (a) hand-label ~50 real
-engineering drawings with 4-class bboxes, (b) retrain starting from
-the provided checkpoint, (c) re-run `convert.py`.
+2. **`dimension_cluster` AP is low.** The auto-labeller that
+   produced `coco_labels_10k.json` makes the dimension-cluster
+   boxes fairly coarse: they can bleed across views, and the
+   clusters themselves are defined by a heuristic rather than a
+   crisp bounding criterion. DETR's set-prediction loss tolerates
+   a bit of box noise but not this much. A crisper label scheme
+   or mixing in tighter hand-labels should help.
+
+3. **Not evaluated on hand-labelled real drawings.** The three
+   fixture drawings in the session workspace's
+   `_shared/test-drawings/` (`tecs_c10`, `tecs_el04`, `telefono`)
+   were used only for qualitative inspection; their qualitative
+   behaviour — view boxes land on views, dim-cluster boxes land on
+   dimension stacks — suggests the model is learning useful priors,
+   but there is no quantitative real-drawing mAP.
+
+4. **No evaluation on Xcode Performance tab.** The ~12 ms p50
+   latency is consistent with ANE-heavy dispatch; in-Xcode
+   profiling would give a per-op breakdown but is a manual UI step.
 
 ## License
 
@@ -126,6 +185,5 @@ Apache-2.0. See `LICENSE` and `NOTICE`.
 Base model: DETR (Detection Transformer), © Facebook AI Research,
 Apache-2.0.
 
-Synthetic-data design draws on Zhang et al., "Data Augmentation of
-Engineering Drawings for Data-driven Component Segmentation" (ASME
-IDETC 2022), MIT License.
+Training images from the TriView2CAD dataset (three-view composite
+drawings generated from public DXF corpora).
